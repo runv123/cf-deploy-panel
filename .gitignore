@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+package-lock.json
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 本地环境 / 临时文件
+.env
+.env.local
+*.log
+tmp/
+temp/
+
+# WorkBuddy 本地数据（不推送）
+.workbuddy-ai/

@@ -1,0 +1,171 @@
+<!doctype html>
+<!-- 云端部署器 —— 由 数码解码 独立开发并维护 · 请勿移除作者与版权声明 -->
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>星云解码 · 一键部署到 Cloudflare</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">星云解码 Nebula-Decode</p>
+          <h1>星云解码 一键部署</h1>
+          <p class="summary">填邮箱和 Global API Key，一键把星云解码部署到 Cloudflare：自动完成 Pages、随机 UUID、随机 KV 和随机项目名；域名绑定可选，子域名自动随机。</p>
+        </div>
+        <div class="status-card">
+          <span class="status-dot"></span>
+          <strong>Key 不会持久化</strong>
+          <p>前端不写入本地存储，当前部署器 API 仅用于转发 Cloudflare 请求。</p>
+        </div>
+      </section>
+
+      <section id="loginPage" class="panel login-panel">
+        <div class="panel-head">
+          <div>
+            <h2>1. 登录 Cloudflare</h2>
+            <p>只需要邮箱和 Global API Key。登录后再进入部署页。</p>
+          </div>
+        </div>
+        <div class="grid two">
+          <label>
+            <span>邮箱</span>
+            <input id="email" autocomplete="username" placeholder="you@example.com" />
+          </label>
+          <label>
+            <span>Global API Key</span>
+            <input id="key" type="password" autocomplete="current-password" placeholder="Cloudflare Global API Key" />
+          </label>
+        </div>
+        <div class="quick-action">
+          <button id="loginButton" class="primary">登录并继续</button>
+          <div id="loginStatus" class="result">未登录</div>
+        </div>
+      </section>
+
+      <section id="deployPage" class="page-hidden">
+        <section class="panel quick-panel">
+          <div class="panel-head">
+            <div>
+              <h2>2. 一键部署</h2>
+              <p>默认使用 Pages + 加密/混淆源。域名绑定是可选项，开启后自动生成随机子域名。</p>
+            </div>
+            <button id="backToLogin" class="secondary">返回登录</button>
+          </div>
+          <div class="grid two">
+            <label>
+              <span>可选域名</span>
+              <select id="quickZone"></select>
+            </label>
+            <label>
+              <span>随机子域名预览</span>
+              <input id="quickHostnamePreview" value="不绑定域名" disabled />
+            </label>
+            <label class="span-two">
+              <span>部署包（可选，.zip，留空则部署远程默认源）</span>
+              <input id="packageFile" type="file" accept=".zip,application/zip" />
+            </label>
+            <p id="packageHint" class="form-note span-two">选择一个 .zip 压缩包即可一键部署它；不选则部署远程默认源。压缩包内含 _worker.js 时会作为 Pages 高级模式脚本一起提交。</p>
+            <label class="toggle span-two">
+              <input id="bindDomain" type="checkbox" />
+              <span>绑定随机子域名</span>
+            </label>
+          </div>
+          <div class="quick-action">
+            <button id="quickDeploy" class="primary">一键部署</button>
+            <div id="result" class="result">等待部署</div>
+          </div>
+        </section>
+        <details class="panel advanced-panel">
+          <summary>高级设置和更新现有项目</summary>
+          <div class="panel-head">
+            <div>
+              <h2>高级设置</h2>
+              <p>需要指定 Worker、明文源、现有项目或现有 KV 时再展开这里。</p>
+            </div>
+            <div class="button-group">
+              <button id="loadAccounts" class="secondary">刷新账户/域名</button>
+              <button id="loadResources" class="secondary">读取现有项目</button>
+              <button id="newNames" class="secondary">随机名称</button>
+              <button id="newUuid" class="secondary">生成 UUID</button>
+            </div>
+          </div>
+          <div class="grid three">
+            <label>
+              <span>Account</span>
+              <select id="accountId"></select>
+            </label>
+            <label>
+              <span>Zone</span>
+              <select id="zoneId"></select>
+            </label>
+            <label>
+              <span>自定义域名</span>
+              <input id="advancedHostname" placeholder="留空不绑定，填根域则随机子域名" />
+            </label>
+            <label>
+              <span>操作</span>
+              <select id="deployMode">
+                <option value="create">随机新建</option>
+                <option value="update">更新现有</option>
+              </select>
+            </label>
+            <label class="span-two">
+              <span>现有项目</span>
+              <select id="existingProject"></select>
+            </label>
+            <label>
+              <span>部署方式</span>
+              <select id="deployType">
+                <option value="pages">Pages</option>
+                <option value="worker">Worker</option>
+              </select>
+            </label>
+            <label>
+              <span>部署源</span>
+              <select id="sourceMode">
+                <option value="encoded">加密 / 混淆</option>
+                <option value="plain">明文</option>
+              </select>
+            </label>
+            <label>
+              <span>项目名称</span>
+              <input id="projectName" />
+            </label>
+            <label class="span-two">
+              <span>UUID</span>
+              <input id="uuid" />
+            </label>
+            <label>
+              <span>KV 名称</span>
+              <input id="kvTitle" />
+            </label>
+            <label>
+              <span>现有 KV</span>
+              <select id="kvId"></select>
+            </label>
+            <p id="modeHint" class="form-note span-two">新建模式会配置随机 UUID、KV 和域名；更新模式只同步代码。</p>
+            <label class="toggle">
+              <input id="enableWorkersDev" type="checkbox" />
+              <span>Worker 模式启用 workers.dev</span>
+            </label>
+          </div>
+          <section class="action-row">
+            <button id="deploy" class="primary">高级部署</button>
+          </section>
+        </details>
+      </section>
+
+      <section class="panel logs-panel">
+        <div class="panel-head compact">
+          <h2>日志</h2>
+          <button id="clearLogs" class="secondary small">清空</button>
+        </div>
+        <pre id="logs"></pre>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
