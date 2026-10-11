@@ -55,6 +55,10 @@
             <button id="backToLogin" class="secondary">返回登录</button>
           </div>
           <div class="grid two">
+            <label class="span-two">
+              <span>项目名称（可选，留空自动随机）</span>
+              <input id="quickProjectName" placeholder="例如 my-panel，留空则随机生成" />
+            </label>
             <label>
               <span>可选域名</span>
               <select id="quickZone"></select>
@@ -77,6 +81,7 @@
             <button id="quickDeploy" class="primary">一键部署</button>
             <div id="result" class="result">等待部署</div>
           </div>
+          <div id="resultActions" class="result-actions page-hidden"></div>
         </section>
         <details class="panel advanced-panel">
           <summary>高级设置和更新现有项目</summary>
@@ -156,6 +161,17 @@
             <button id="deploy" class="primary">高级部署</button>
           </section>
         </details>
+      </section>
+
+      <section id="historyPanel" class="panel history-panel page-hidden">
+        <div class="panel-head compact">
+          <div>
+            <h2>部署历史</h2>
+            <p>仅保存在本机浏览器（localStorage），不包含任何密钥。</p>
+          </div>
+          <button id="clearHistory" class="secondary small">清空历史</button>
+        </div>
+        <div id="historyList" class="history-list"></div>
       </section>
 
       <section class="panel logs-panel">

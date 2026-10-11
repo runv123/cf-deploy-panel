@@ -21,3 +21,7 @@ temp/
 
 # WorkBuddy 本地数据（不推送）
 .workbuddy-ai/
+
+# 打包产物（源码仓库不存构建产物）
+*.zip
+cf-deploy-panel.zip

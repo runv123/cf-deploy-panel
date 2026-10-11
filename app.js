@@ -8,9 +8,13 @@ const state = {
   workers: [],
   pages: [],
   kvs: [],
-  packageFiles: null
+  packageFiles: null,
+  history: []
 };
 
+const HISTORY_KEY = 'cf-deploy-history';
+
+loadHistory();
 setRandomNames();
 $('uuid').value = crypto.randomUUID();
 fillSelect($('accountId'), [], '自动选择第一个账户');
@@ -18,6 +22,7 @@ fillSelect($('zoneId'), [], '自动随机子域名');
 fillSelect($('quickZone'), [], '无可用域名');
 fillProjectSelect();
 fillKvSelect();
+renderHistory();
 
 $('loginButton').addEventListener('click', login);
 $('backToLogin').addEventListener('click', () => {
@@ -41,6 +46,14 @@ $('packageFile').addEventListener('change', onPackageChange);
 
 $('clearLogs').addEventListener('click', () => {
   $('logs').textContent = '';
+});
+
+$('clearHistory').addEventListener('click', () => {
+  if (!confirm('确定清空本机部署历史？此操作不可撤销。')) return;
+  state.history = [];
+  saveHistory();
+  renderHistory();
+  log('部署历史已清空');
 });
 
 $('accountId').addEventListener('change', async () => {
@@ -137,13 +150,18 @@ async function runDeploy(collector) {
     return;
   }
   setResult('部署中...');
+  hideResultActions();
   setBusy(true);
   try {
     const payload = collector();
     const result = await post('/api/deploy', payload);
     (result.logs || []).forEach(log);
-    const url = formatDeployResult(payload, result);
-    setResult(url, 'success');
+    const info = buildDeployInfo(payload, result);
+    setResult(info.text, 'success');
+    if (payload.deployMode !== 'update') {
+      recordHistory(info);
+      renderResultActions(info);
+    }
   } catch (error) {
     setResult(error.message, 'error');
     log(`错误: ${error.message}`);
@@ -152,10 +170,77 @@ async function runDeploy(collector) {
   }
 }
 
+function buildDeployInfo(payload, result) {
+  if (payload.deployMode === 'update') {
+    return { text: `${result.projectName} 代码同步完成`, projectName: result.projectName, uuid: null, url: null, mode: 'update' };
+  }
+  const subdomain = `${result.projectName}.pages.dev`;
+  const url = result.domain?.hostname
+    ? `https://${result.domain.hostname}/${result.uuid}`
+    : `https://${subdomain}/${result.uuid}`;
+  return {
+    text: `${result.projectName} 部署完成`,
+    projectName: result.projectName,
+    uuid: result.uuid,
+    url,
+    rootUrl: `https://${subdomain}`,
+    domain: result.domain?.hostname || '',
+    mode: 'create'
+  };
+}
+
 function formatDeployResult(payload, result) {
-  if (payload.deployMode === 'update') return `${result.projectName} 代码同步完成`;
-  if (result.domain?.hostname) return `https://${result.domain.hostname}/${result.uuid}`;
-  return `${result.projectName} 部署完成，UUID: ${result.uuid}`;
+  return buildDeployInfo(payload, result).text;
+}
+
+function renderResultActions(info) {
+  const box = $('resultActions');
+  box.innerHTML = '';
+  const link = document.createElement('a');
+  link.href = info.url;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.className = 'result-link';
+  link.textContent = info.url;
+  const wrap = document.createElement('div');
+  wrap.className = 'result-link-wrap';
+  wrap.append(link);
+  box.append(wrap);
+  box.append(actionButton('复制链接', () => copyText(info.url)));
+  box.append(actionButton('复制 UUID', () => copyText(info.uuid)));
+  box.append(actionButton('打开面板', () => window.open(info.url, '_blank', 'noopener')));
+  box.classList.remove('page-hidden');
+}
+
+function actionButton(label, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'secondary small';
+  button.textContent = label;
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function hideResultActions() {
+  const box = $('resultActions');
+  box.innerHTML = '';
+  box.classList.add('page-hidden');
+}
+
+async function copyText(text) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    log(`已复制: ${text}`);
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+    log(`已复制: ${text}`);
+  }
 }
 
 async function loadResources() {
@@ -193,7 +278,7 @@ function collectQuickPayload() {
     deployMode: 'create',
     deployType: 'pages',
     sourceMode: 'encoded',
-    projectName: randomName('edge'),
+    projectName: resolveProjectName(),
     uuid: crypto.randomUUID(),
     kvTitle: randomName('store'),
     hostname,
@@ -202,9 +287,23 @@ function collectQuickPayload() {
   };
   if (state.packageFiles && state.packageFiles.length) {
     payload.files = state.packageFiles;
-    payload.projectName = packageProjectName();
   }
   return payload;
+}
+
+function resolveProjectName() {
+  const custom = sanitizeProjectName($('quickProjectName').value);
+  if (custom) return custom;
+  const file = $('packageFile').files && $('packageFile').files[0];
+  if (file) {
+    const base = sanitizeProjectName(file.name.replace(/\.zip$/i, ''));
+    if (base) return `${base.slice(0, 44)}-${randomName('edge').split('-')[1]}`;
+  }
+  return randomName('edge');
+}
+
+function sanitizeProjectName(name) {
+  return String(name || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 52);
 }
 
 function collectAdvancedPayload() {
@@ -390,11 +489,92 @@ async function onPackageChange(event) {
   }
 }
 
-function packageProjectName() {
-  const file = $('packageFile').files && $('packageFile').files[0];
-  const base = file ? file.name.replace(/\.zip$/i, '') : '';
-  const cleaned = base.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-  return cleaned ? `${cleaned.slice(0, 40)}-${randomName('edge').split('-')[1]}` : randomName('edge');
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    state.history = Array.isArray(parsed) ? parsed.filter(item => item && item.projectName) : [];
+  } catch {
+    state.history = [];
+  }
+}
+
+function saveHistory() {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history.slice(0, 50)));
+  } catch {
+    // 本地存储不可用时静默降级，不影响部署
+  }
+}
+
+function recordHistory(info) {
+  if (!info || info.mode === 'update' || !info.projectName) return;
+  state.history.unshift({
+    projectName: info.projectName,
+    uuid: info.uuid || '',
+    url: info.url || '',
+    domain: info.domain || '',
+    account: $('accountId').selectedOptions?.[0]?.textContent || '',
+    time: new Date().toISOString()
+  });
+  state.history = state.history.slice(0, 50);
+  saveHistory();
+  renderHistory();
+}
+
+function renderHistory() {
+  const panel = $('historyPanel');
+  const list = $('historyList');
+  if (!state.history.length) {
+    panel.classList.add('page-hidden');
+    list.innerHTML = '';
+    return;
+  }
+  panel.classList.remove('page-hidden');
+  list.innerHTML = '';
+  for (const item of state.history) {
+    const row = document.createElement('div');
+    row.className = 'history-row';
+
+    const info = document.createElement('div');
+    info.className = 'history-info';
+    const title = document.createElement('strong');
+    title.textContent = item.projectName;
+    const meta = document.createElement('span');
+    meta.className = 'history-meta';
+    meta.textContent = `${formatTime(item.time)}${item.domain ? ` · 域名 ${item.domain}` : ''}`;
+    info.append(title, meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'history-actions';
+    if (item.url) {
+      const open = document.createElement('a');
+      open.href = item.url;
+      open.target = '_blank';
+      open.rel = 'noopener';
+      open.className = 'secondary small history-open';
+      open.textContent = '打开';
+      actions.append(open);
+      actions.append(actionButton('复制', () => copyText(item.url)));
+    }
+    actions.append(actionButton('删除', () => removeHistory(item)));
+
+    row.append(info, actions);
+    list.append(row);
+  }
+}
+
+function removeHistory(item) {
+  state.history = state.history.filter(entry => !(entry.projectName === item.projectName && entry.time === item.time));
+  saveHistory();
+  renderHistory();
+}
+
+function formatTime(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = value => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 async function unzipToFiles(file) {
