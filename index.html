@@ -1,187 +1,163 @@
-<!doctype html>
-<!-- 云端部署器 —— 由 数码解码 独立开发并维护 · 请勿移除作者与版权声明 -->
+<!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>星云解码 · 一键部署到 Cloudflare</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <main class="shell">
-      <section class="hero">
-        <div>
-          <p class="eyebrow">星云解码 Nebula-Decode</p>
-          <h1>星云解码 一键部署</h1>
-          <p class="summary">填邮箱和 Global API Key，一键把星云解码部署到 Cloudflare：自动完成 Pages、随机 UUID、随机 KV 和随机项目名；域名绑定可选，子域名自动随机。</p>
-        </div>
-        <div class="status-card">
-          <span class="status-dot"></span>
-          <strong>Key 不会持久化</strong>
-          <p>前端不写入本地存储，当前部署器 API 仅用于转发 Cloudflare 请求。</p>
-        </div>
-      </section>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>云端部署器 · Cloudflare 通用部署面板</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <!-- 顶部标题 -->
+    <header class="hero">
+      <div>
+        <span class="eyebrow">CLOUDFLARE DEPLOYER</span>
+        <h1>云端部署器</h1>
+        <p class="summary">
+          通用 Cloudflare 部署面板 · 一键把任意项目部署到 Workers / Pages，
+          并按需绑定 KV、D1、R2、Queues、Durable Objects、Vectorize、Workflows、Hyperdrive 等免费服务。
+        </p>
+      </div>
+    </header>
 
-      <section id="loginPage" class="panel login-panel">
+    <!-- 登录页 -->
+    <section id="loginPage" class="panel login-panel">
+      <div class="panel-head">
+        <div>
+          <h2>登录 Cloudflare</h2>
+          <p>只需要邮箱 + Global API Key。前端不持久化密钥。</p>
+        </div>
+      </div>
+      <div class="grid two">
+        <label>
+          <span>Cloudflare 邮箱</span>
+          <input id="email" type="email" placeholder="you@example.com" autocomplete="username">
+        </label>
+        <label>
+          <span>Global API Key</span>
+          <input id="key" type="password" placeholder="Global API Key" autocomplete="off">
+        </label>
+        <div class="span-two action-row">
+          <button id="loginButton" class="primary">登录并继续</button>
+        </div>
+      </div>
+      <p id="loginStatus" class="result"></p>
+    </section>
+
+    <!-- 部署页 -->
+    <section id="deployPage" class="page-hidden">
+      <!-- 部署方式 -->
+      <div class="panel">
         <div class="panel-head">
           <div>
-            <h2>1. 登录 Cloudflare</h2>
-            <p>只需要邮箱和 Global API Key。登录后再进入部署页。</p>
+            <h2>部署目标</h2>
+            <p>选择部署到 Cloudflare Workers 还是 Pages，以及操作模式。</p>
+          </div>
+          <div class="button-group">
+            <button id="backToLogin" class="secondary small">返回登录</button>
           </div>
         </div>
-        <div class="grid two">
+        <div class="grid three">
           <label>
-            <span>邮箱</span>
-            <input id="email" autocomplete="username" placeholder="you@example.com" />
+            <span>部署方式</span>
+            <select id="deployType">
+              <option value="pages">Pages（静态站点 + 高级模式）</option>
+              <option value="worker">Worker（纯脚本）</option>
+            </select>
           </label>
           <label>
-            <span>Global API Key</span>
-            <input id="key" type="password" autocomplete="current-password" placeholder="Cloudflare Global API Key" />
+            <span>操作模式</span>
+            <select id="deployMode">
+              <option value="create">随机新建</option>
+              <option value="update">更新现有</option>
+            </select>
+          </label>
+          <label>
+            <span>项目名</span>
+            <input id="projectName" placeholder="自动随机">
           </label>
         </div>
-        <div class="quick-action">
-          <button id="loginButton" class="primary">登录并继续</button>
-          <div id="loginStatus" class="result">未登录</div>
+        <div class="grid three">
+          <label>
+            <span>源码模式</span>
+            <select id="sourceMode">
+              <option value="encoded">加密/混淆源</option>
+              <option value="plain">明文源</option>
+            </select>
+          </label>
+          <label>
+            <span>部署包（可选 .zip）</span>
+            <input id="packageFile" type="file" accept=".zip">
+          </label>
+          <label>
+            <span>UUID</span>
+            <input id="uuid" placeholder="随机生成">
+          </label>
         </div>
-      </section>
+        <p id="packageHint" class="form-note span-two">选择 .zip 压缩包即可一键部署；不选则拉取远程默认源。含 _worker.js 时作为高级模式脚本提交。</p>
+      </div>
 
-      <section id="deployPage" class="page-hidden">
-        <section class="panel quick-panel">
-          <div class="panel-head">
-            <div>
-              <h2>2. 一键部署</h2>
-              <p>默认使用 Pages + 加密/混淆源。域名绑定是可选项，开启后自动生成随机子域名。</p>
-            </div>
-            <button id="backToLogin" class="secondary">返回登录</button>
-          </div>
-          <div class="grid two">
-            <label class="span-two">
-              <span>项目名称（可选，留空自动随机）</span>
-              <input id="quickProjectName" placeholder="例如 my-panel，留空则随机生成" />
-            </label>
-            <label>
-              <span>可选域名</span>
-              <select id="quickZone"></select>
-            </label>
-            <label>
-              <span>随机子域名预览</span>
-              <input id="quickHostnamePreview" value="不绑定域名" disabled />
-            </label>
-            <label class="span-two">
-              <span>部署包（可选，.zip，留空则部署远程默认源）</span>
-              <input id="packageFile" type="file" accept=".zip,application/zip" />
-            </label>
-            <p id="packageHint" class="form-note span-two">选择一个 .zip 压缩包即可一键部署它；不选则部署远程默认源。压缩包内含 _worker.js 时会作为 Pages 高级模式脚本一起提交。</p>
-            <label class="toggle span-two">
-              <input id="bindDomain" type="checkbox" />
-              <span>绑定随机子域名</span>
-            </label>
-          </div>
-          <div class="quick-action">
-            <button id="quickDeploy" class="primary">一键部署</button>
-            <div id="result" class="result">等待部署</div>
-          </div>
-          <div id="resultActions" class="result-actions page-hidden"></div>
-        </section>
-        <details class="panel advanced-panel">
-          <summary>高级设置和更新现有项目</summary>
-          <div class="panel-head">
-            <div>
-              <h2>高级设置</h2>
-              <p>需要指定 Worker、明文源、现有项目或现有 KV 时再展开这里。</p>
-            </div>
-            <div class="button-group">
-              <button id="loadAccounts" class="secondary">刷新账户/域名</button>
-              <button id="loadResources" class="secondary">读取现有项目</button>
-              <button id="newNames" class="secondary">随机名称</button>
-              <button id="newUuid" class="secondary">生成 UUID</button>
-            </div>
-          </div>
-          <div class="grid three">
-            <label>
-              <span>Account</span>
-              <select id="accountId"></select>
-            </label>
-            <label>
-              <span>Zone</span>
-              <select id="zoneId"></select>
-            </label>
-            <label>
-              <span>自定义域名</span>
-              <input id="advancedHostname" placeholder="留空不绑定，填根域则随机子域名" />
-            </label>
-            <label>
-              <span>操作</span>
-              <select id="deployMode">
-                <option value="create">随机新建</option>
-                <option value="update">更新现有</option>
-              </select>
-            </label>
-            <label class="span-two">
-              <span>现有项目</span>
-              <select id="existingProject"></select>
-            </label>
-            <label>
-              <span>部署方式</span>
-              <select id="deployType">
-                <option value="pages">Pages</option>
-                <option value="worker">Worker</option>
-              </select>
-            </label>
-            <label>
-              <span>部署源</span>
-              <select id="sourceMode">
-                <option value="encoded">加密 / 混淆</option>
-                <option value="plain">明文</option>
-              </select>
-            </label>
-            <label>
-              <span>项目名称</span>
-              <input id="projectName" />
-            </label>
-            <label class="span-two">
-              <span>UUID</span>
-              <input id="uuid" />
-            </label>
-            <label>
-              <span>KV 名称</span>
-              <input id="kvTitle" />
-            </label>
-            <label>
-              <span>现有 KV</span>
-              <select id="kvId"></select>
-            </label>
-            <p id="modeHint" class="form-note span-two">新建模式会配置随机 UUID、KV 和域名；更新模式只同步代码。</p>
-            <label class="toggle">
-              <input id="enableWorkersDev" type="checkbox" />
-              <span>Worker 模式启用 workers.dev</span>
-            </label>
-          </div>
-          <section class="action-row">
-            <button id="deploy" class="primary">高级部署</button>
-          </section>
-        </details>
-      </section>
-
-      <section id="historyPanel" class="panel history-panel page-hidden">
-        <div class="panel-head compact">
+      <!-- 服务配置中心（动态渲染卡片） -->
+      <div class="panel">
+        <div class="panel-head">
           <div>
-            <h2>部署历史</h2>
-            <p>仅保存在本机浏览器（localStorage），不包含任何密钥。</p>
+            <h2>服务配置</h2>
+            <p>勾选要绑定的 Cloudflare 免费服务，展开配置绑定名与新建/复用。</p>
           </div>
-          <button id="clearHistory" class="secondary small">清空历史</button>
+          <div class="button-group">
+            <button id="loadResources" class="secondary small">读取现有资源</button>
+          </div>
         </div>
-        <div id="historyList" class="history-list"></div>
-      </section>
+        <div id="serviceCards" class="grid two"></div>
+      </div>
 
-      <section class="panel logs-panel">
+      <!-- 域名绑定 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>域名绑定（可选）</h2>
+            <p>绑定自定义子域名；不填则用默认 *.pages.dev 或 *.workers.dev。</p>
+          </div>
+        </div>
+        <div class="grid three">
+          <label>
+            <span>Zone（域名区域）</span>
+            <select id="zoneId"><option value="">不绑定域名</option></select>
+          </label>
+          <label>
+            <span>自定义域名</span>
+            <input id="hostname" placeholder="如 app.example.com">
+          </label>
+          <label class="toggle">
+            <input id="enableWorkersDev" type="checkbox" checked>
+            <span>启用 workers.dev</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- 部署按钮 -->
+      <div class="panel">
+        <div class="action-row">
+          <button id="deploy" class="primary">一键部署</button>
+          <button id="newNames" class="secondary">重新随机</button>
+        </div>
+        <p id="result" class="result"></p>
+        <div id="resultActions" class="result-actions page-hidden"></div>
+      </div>
+
+      <!-- 日志 -->
+      <div class="panel">
         <div class="panel-head compact">
           <h2>日志</h2>
-          <button id="clearLogs" class="secondary small">清空</button>
+          <div class="button-group">
+            <button id="clearLogs" class="secondary small">清空日志</button>
+          </div>
         </div>
-        <pre id="logs"></pre>
-      </section>
-    </main>
-    <script src="/app.js"></script>
-  </body>
+        <pre id="logs" class="logs"></pre>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
 </html>
