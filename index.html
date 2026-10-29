@@ -58,42 +58,43 @@
           </div>
         </div>
         <div class="grid three">
-          <label>
-            <span>部署方式</span>
-            <select id="deployType">
-              <option value="pages">Pages（静态站点 + 高级模式）</option>
-              <option value="worker">Worker（纯脚本）</option>
-            </select>
-          </label>
-          <label>
-            <span>操作模式</span>
-            <select id="deployMode">
-              <option value="create">随机新建</option>
-              <option value="update">更新现有</option>
-            </select>
-          </label>
-          <label>
-            <span>项目名</span>
-            <input id="projectName" placeholder="自动随机">
-          </label>
-        </div>
-        <div class="grid three">
-          <label>
-            <span>源码模式</span>
-            <select id="sourceMode">
-              <option value="encoded">加密/混淆源</option>
-              <option value="plain">明文源</option>
-            </select>
-          </label>
-          <label>
-            <span>部署包（可选 .zip）</span>
-            <input id="packageFile" type="file" accept=".zip">
-          </label>
-          <label>
-            <span>UUID</span>
-            <input id="uuid" placeholder="随机生成">
-          </label>
-        </div>
+  <label>
+    <span>账户</span>
+    <select id="accountId"><option value="">自动选择第一个</option></select>
+  </label>
+  <label>
+    <span>部署方式</span>
+    <select id="deployType">
+      <option value="pages">Pages（静态站点 + 高级模式）</option>
+      <option value="worker">Worker（纯脚本）</option>
+    </select>
+  </label>
+  <label>
+    <span>操作模式</span>
+    <select id="deployMode">
+      <option value="create">随机新建</option>
+      <option value="update">更新现有</option>
+    </select>
+  </label>
+</div>
+<div class="grid three">
+  <label>
+    <span>项目名</span>
+    <input id="projectName" placeholder="自动随机">
+  </label>
+  <label>
+    <span>源码模式</span>
+    <select id="sourceMode">
+      <option value="encoded">加密/混淆源</option>
+      <option value="plain">明文源</option>
+    </select>
+  </label>
+  <label>
+    <span>UUID</span>
+    <input id="uuid" placeholder="随机生成">
+  </label>
+</div>
+
         <p id="packageHint" class="form-note span-two">选择 .zip 压缩包即可一键部署；不选则拉取远程默认源。含 _worker.js 时作为高级模式脚本提交。</p>
       </div>
 
