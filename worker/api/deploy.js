@@ -11,7 +11,7 @@
 //  6. 绑定域名
 // ============================================================
 
-import { 调用接口, 返回JSON, 生成随机名称, 清理项目名 } from './util.js';
+import { 调用接口, 返回JSON, 生成随机名称, 清理项目名, 调用JWT接口, 提取扩展名, 内容类型, 字节转Base64, 计算资源Hash } from './util.js';
 import { 兼容日期, 源码远程基础 } from '../config.js';
 import { SERVICES, getService } from '../services/index.js';
 import { 绑定域名, 列出绑定域名 } from '../services/domains.js';
