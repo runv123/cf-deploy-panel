@@ -1,115 +1,200 @@
-// 云端部署器 · 前端逻辑 —— 由 数码解码 独立开发并维护 · 请勿移除作者与版权声明
+// ============================================================
+// 云端部署器 · 前端逻辑
+// 由 数码解码 独立开发并维护 · 请勿移除作者与版权声明
+// ------------------------------------------------------------
+// 分区：
+//  1. 状态与常量
+//  2. 服务注册表（前端镜像，和后端 SERVICES 对应）
+//  3. DOM 工具
+//  4. 服务卡片渲染（动态）
+//  5. 登录 / 账户 / Zone 读取
+//  6. 现有资源读取
+//  7. 表单收集 & 部署
+//  8. 日志 & 界面控制
+//  9. 压缩包解压（zip）
+// ============================================================
+
 const $ = id => document.getElementById(id);
 
+// ============ 1. 状态与常量 ============
 const state = {
   loggedIn: false,
   accounts: [],
   zones: [],
-  workers: [],
-  pages: [],
-  kvs: [],
+  services: {},      // 服务配置状态 { kv: { enabled, bindName, mode, ... } }
+  resources: {},     // 现有资源 { kv: [...], d1: [...], ... }
   packageFiles: null,
-  history: []
 };
 
-const HISTORY_KEY = 'cf-deploy-history';
+// 前端服务注册表（镜像后端，含 collectPayload 逻辑）
+const SERVICES = [
+  { id: 'kv', label: 'KV 命名空间', icon: '🗄️', freeTier: '1GB / 10万读每天', defaultBind: 'KV', bindPlaceholder: 'KV' },
+  { id: 'd1', label: 'D1 数据库', icon: '🗃️', freeTier: '5GB / 500万行读每月', defaultBind: 'DB', bindPlaceholder: 'DB' },
+  { id: 'r2', label: 'R2 存储桶', icon: '🪣', freeTier: '10GB / 100万操作每月', defaultBind: 'BUCKET', bindPlaceholder: 'BUCKET' },
+  { id: 'queues', label: 'Queues 队列', icon: '📨', freeTier: '1万条/天', defaultBind: 'QUEUE', bindPlaceholder: 'QUEUE' },
+  { id: 'durable', label: 'Durable Objects', icon: '🧩', freeTier: '40万GB-s/月', defaultBind: 'DO', bindPlaceholder: 'DO', extraField: 'className', extraLabel: '类名', extraPlaceholder: 'MyObject' },
+  { id: 'vectorize', label: 'Vectorize 向量库', icon: '🧠', freeTier: '免费档有额度', defaultBind: 'VECTORIZE', bindPlaceholder: 'VECTORIZE', extraField: 'dimensions', extraLabel: '维度', extraPlaceholder: '768' },
+  { id: 'workflows', label: 'Workflows 工作流', icon: '🔁', freeTier: '免费档有额度', defaultBind: 'WORKFLOW', bindPlaceholder: 'WORKFLOW' },
+  { id: 'hyperdrive', label: 'Hyperdrive 连接池', icon: '🚀', freeTier: '10万查询/天', defaultBind: 'HYPERDRIVE', bindPlaceholder: 'HYPERDRIVE', extraField: 'connectionString', extraLabel: '连接串', extraPlaceholder: 'postgres://...' },
+];
 
-loadHistory();
-setRandomNames();
-$('uuid').value = crypto.randomUUID();
-fillSelect($('accountId'), [], '自动选择第一个账户');
-fillSelect($('zoneId'), [], '自动随机子域名');
-fillSelect($('quickZone'), [], '无可用域名');
-fillProjectSelect();
-fillKvSelect();
-renderHistory();
-
-$('loginButton').addEventListener('click', login);
-$('backToLogin').addEventListener('click', () => {
-  state.loggedIn = false;
-  showPage('login');
-  setLoginStatus('已返回登录页');
-});
-$('quickDeploy').addEventListener('click', () => runDeploy(collectQuickPayload));
-$('deploy').addEventListener('click', () => runDeploy(collectAdvancedPayload));
-
-$('newNames').addEventListener('click', setRandomNames);
-
-$('newUuid').addEventListener('click', () => {
-  $('uuid').value = crypto.randomUUID();
-});
-
-$('bindDomain').addEventListener('change', updateQuickDomainPreview);
-$('quickZone').addEventListener('change', updateQuickDomainPreview);
-
-$('packageFile').addEventListener('change', onPackageChange);
-
-$('clearLogs').addEventListener('click', () => {
-  $('logs').textContent = '';
-});
-
-$('clearHistory').addEventListener('click', () => {
-  if (!confirm('确定清空本机部署历史？此操作不可撤销。')) return;
-  state.history = [];
-  saveHistory();
-  renderHistory();
-  log('部署历史已清空');
-});
-
-$('accountId').addEventListener('change', async () => {
-  if ($('accountId').value) await loadResources();
-});
-
-$('zoneId').addEventListener('change', () => {
-  if (!$('advancedHostname').value.trim()) return;
-  const zone = state.zones.find(item => item.id === $('zoneId').value);
-  if (zone && $('advancedHostname').value.trim().split('.').length <= 2) $('advancedHostname').value = zone.name;
-});
-
-$('deployMode').addEventListener('change', syncModeState);
-
-$('existingProject').addEventListener('change', () => {
-  const selected = parseProjectValue($('existingProject').value);
-  if (!selected) return;
-  $('deployMode').value = 'update';
-  $('deployType').value = selected.type;
-  $('projectName').value = selected.name;
-  syncModeState();
-  setResult(`已选择 ${selected.type === 'pages' ? 'Pages' : 'Worker'} 项目，更新模式只同步代码`, 'success');
-});
-
-$('kvId').addEventListener('change', () => {
-  const selected = state.kvs.find(item => item.id === $('kvId').value);
-  if (selected) $('kvTitle').value = selected.title || '';
-});
-
-$('loadAccounts').addEventListener('click', async () => {
-  setResult('刷新 Cloudflare 账户和域名中...');
-  setBusy(true);
-  try {
-    await loadCloudflareBase();
-    setResult('账户和域名读取完成', 'success');
-    if ($('accountId').value) await loadResources();
-  } catch (error) {
-    setResult(error.message, 'error');
-    log(`错误: ${error.message}`);
-  } finally {
-    setBusy(false);
+// ============ 2. DOM 工具 ============
+function fillSelect(select, items, emptyLabel) {
+  select.innerHTML = '';
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = emptyLabel;
+  select.append(empty);
+  for (const item of items) {
+    const option = document.createElement('option');
+    option.value = item.id;
+    option.textContent = `${item.name} (${item.id})`;
+    select.append(option);
   }
-});
+  if (items.length === 1) select.value = items[0].id;
+}
 
-$('loadResources').addEventListener('click', async () => {
-  setBusy(true);
-  try {
-    await loadResources();
-  } catch (error) {
-    setResult(error.message, 'error');
-    log(`错误: ${error.message}`);
-  } finally {
-    setBusy(false);
+function appendOption(select, value, text) {
+  const option = document.createElement('option');
+  option.value = value;
+  option.textContent = text;
+  select.append(option);
+}
+
+async function post(url, body) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok) throw new Error(data.error || `请求失败: ${response.status}`);
+  return data;
+}
+
+function randomName(prefix) {
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  const suffix = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  return `${prefix}-${suffix}`;
+}
+
+function sanitizeProjectName(name) {
+  return String(name || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 52);
+}
+
+// ============ 3. 服务卡片渲染 ============
+function renderServiceCards() {
+  const container = $('serviceCards');
+  container.innerHTML = '';
+  for (const service of SERVICES) {
+    const cfg = state.services[service.id] || { enabled: false, bindName: service.defaultBind, mode: 'new', existingId: '' };
+    state.services[service.id] = cfg;
+
+    const card = document.createElement('div');
+    card.className = 'service-card';
+    card.dataset.service = service.id;
+
+    const header = document.createElement('div');
+    header.className = 'service-card-header';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.id = `svc-${service.id}`;
+    check.checked = cfg.enabled;
+    check.addEventListener('change', () => {
+      cfg.enabled = check.checked;
+      card.classList.toggle('enabled', check.checked);
+      form.classList.toggle('page-hidden', !check.checked);
+    });
+    const title = document.createElement('span');
+    title.className = 'service-title';
+    title.textContent = `${service.icon} ${service.label}`;
+    const tier = document.createElement('span');
+    tier.className = 'service-tier';
+    tier.textContent = service.freeTier;
+    header.append(check, title, tier);
+    card.append(header);
+
+    const form = document.createElement('div');
+    form.className = 'service-card-form page-hidden';
+    if (cfg.enabled) { form.classList.remove('page-hidden'); card.classList.add('enabled'); }
+
+    const row1 = document.createElement('div');
+    row1.className = 'service-form-row';
+    // 绑定名
+    const bindWrap = document.createElement('label');
+    bindWrap.innerHTML = `<span>绑定名</span>`;
+    const bindInput = document.createElement('input');
+    bindInput.value = cfg.bindName;
+    bindInput.placeholder = service.bindPlaceholder;
+    bindInput.addEventListener('change', () => cfg.bindName = bindInput.value.trim() || service.defaultBind);
+    bindWrap.append(bindInput);
+    row1.append(bindWrap);
+
+    // 模式（新建/复用）
+    const modeWrap = document.createElement('label');
+    modeWrap.innerHTML = `<span>资源</span>`;
+    const modeSelect = document.createElement('select');
+    appendOption(modeSelect, 'new', '新建随机');
+    appendOption(modeSelect, 'existing', '复用现有');
+    modeSelect.value = cfg.mode;
+    modeSelect.addEventListener('change', () => {
+      cfg.mode = modeSelect.value;
+      existingWrap.classList.toggle('page-hidden', modeSelect.value !== 'existing');
+    });
+    modeWrap.append(modeSelect);
+    row1.append(modeWrap);
+    form.append(row1);
+
+    // 复用现有下拉
+    const existingWrap = document.createElement('div');
+    existingWrap.className = 'service-form-row page-hidden';
+    const existLabel = document.createElement('label');
+    existLabel.innerHTML = `<span>已有资源</span>`;
+    const existSelect = document.createElement('select');
+    existSelect.dataset.noFill = '1';
+    existSelect.addEventListener('change', () => cfg.existingId = existSelect.value);
+    existLabel.append(existSelect);
+    existingWrap.append(existLabel);
+    form.append(existingWrap);
+
+    // 额外字段（durable/vectorize/hyperdrive）
+    if (service.extraField) {
+      const extraRow = document.createElement('div');
+      extraRow.className = 'service-form-row';
+      const extraLabel = document.createElement('label');
+      extraLabel.innerHTML = `<span>${service.extraLabel}</span>`;
+      const extraInput = document.createElement('input');
+      extraInput.value = cfg[service.extraField] || '';
+      extraInput.placeholder = service.extraPlaceholder;
+      extraInput.addEventListener('change', () => cfg[service.extraField] = extraInput.value);
+      extraLabel.append(extraInput);
+      extraRow.append(extraLabel);
+      form.append(extraRow);
+    }
+
+    card.append(form);
+    container.append(card);
   }
-});
+  refreshResourceSelects();
+}
 
+function refreshResourceSelects() {
+  for (const service of SERVICES) {
+    const card = document.querySelector(`.service-card[data-service="${service.id}"]`);
+    if (!card) continue;
+    const cfg = state.services[service.id];
+    const existSelect = card.querySelector('select[data-no-fill]');
+    if (!existSelect) continue;
+    existSelect.innerHTML = '';
+    const 资源列表 = state.resources[service.id] || [];
+    appendOption(existSelect, '', 资源列表.length ? '选择已有资源' : '暂无（先读取）');
+    for (const item of 资源列表) appendOption(existSelect, item.id, item.name);
+    if (cfg.existingId) existSelect.value = cfg.existingId;
+  }
+}
+
+// ============ 4. 登录 / 账户 / Zone ============
 async function login() {
   setLoginStatus('登录中...');
   setBusy(true);
@@ -118,7 +203,7 @@ async function login() {
     state.loggedIn = true;
     showPage('deploy');
     setLoginStatus('登录成功', 'success');
-    setResult('已登录，可以一键部署', 'success');
+    setResult('已登录，可以配置部署', 'success');
   } catch (error) {
     setLoginStatus(error.message, 'error');
     log(`登录失败: ${error.message}`);
@@ -131,37 +216,99 @@ async function loadCloudflareBase() {
   const credentials = getCredentials();
   const [accountsRes, zonesRes] = await Promise.all([
     post('/api/accounts', { credentials }),
-    post('/api/zones', { credentials })
+    post('/api/zones', { credentials }),
   ]);
   state.accounts = accountsRes.accounts || [];
   state.zones = zonesRes.zones || [];
   fillSelect($('accountId'), state.accounts, '自动选择第一个账户');
-  fillSelect($('zoneId'), state.zones, '自动随机子域名');
-  fillSelect($('quickZone'), state.zones, state.zones.length ? '不绑定域名' : '无可用域名');
-  updateQuickDomainPreview();
+  fillSelect($('zoneId'), state.zones, '不绑定域名');
   log(`账户数量: ${state.accounts.length}`);
   log(`可用 Zone: ${state.zones.length}`);
 }
 
-async function runDeploy(collector) {
-  if (!state.loggedIn) {
-    setResult('请先登录', 'error');
-    showPage('login');
-    return;
+function getCredentials() {
+  const email = $('email').value.trim();
+  const key = $('key').value.trim();
+  if (!email || !key) throw new Error('请填写 Cloudflare 邮箱和 Global API Key');
+  return { email, key };
+}
+
+// ============ 5. 现有资源读取 ============
+async function loadResources() {
+  const credentials = getCredentials();
+  const accountId = $('accountId').value || state.accounts[0]?.id;
+  if (!accountId) throw new Error('请先读取并选择 Account');
+  setResult('读取现有资源中...');
+  const services = {};
+  for (const service of SERVICES) {
+    services[service.id] = !!state.services[service.id]?.enabled;
   }
+  const res = await post('/api/resources', { credentials, accountId, services });
+  state.resources = res.resources || {};
+  refreshResourceSelects();
+  (res.warnings || []).forEach(w => log(`提示: ${w}`));
+  setResult('现有资源读取完成', 'success');
+}
+
+// ============ 6. 表单收集 & 部署 ============
+function collectPayload() {
+  const credentials = getCredentials();
+  const deployMode = $('deployMode').value;
+  const deployType = $('deployType').value;
+  const projectName = $('projectName').value.trim();
+
+  if (deployMode === 'update') {
+    if (!projectName) throw new Error('更新模式必须填写项目名');
+    return { credentials, deployMode, deployType, projectName, sourceMode: $('sourceMode').value };
+  }
+
+  const services = {};
+  for (const service of SERVICES) {
+    const cfg = state.services[service.id];
+    if (!cfg?.enabled) continue;
+    services[service.id] = {
+      enabled: true,
+      bindName: cfg.bindName,
+      mode: cfg.mode,
+      existingId: cfg.existingId || '',
+      title: cfg.title || randomName(service.id),
+    };
+    for (const extra of ['className', 'dimensions', 'connectionString']) {
+      if (cfg[extra]) services[service.id][extra] = cfg[extra];
+    }
+  }
+
+  const payload = {
+    credentials,
+    accountId: $('accountId').value || state.accounts[0]?.id,
+    deployMode,
+    deployType,
+    sourceMode: $('sourceMode').value,
+    projectName,
+    uuid: $('uuid').value.trim() || crypto.randomUUID(),
+    hostname: $('hostname').value.trim(),
+    zoneId: $('zoneId').value,
+    enableWorkersDev: $('enableWorkersDev').checked,
+    services,
+  };
+  if (state.packageFiles && state.packageFiles.length) payload.files = state.packageFiles;
+  return payload;
+}
+
+async function runDeploy() {
+  if (!state.loggedIn) { setResult('请先登录', 'error'); showPage('login'); return; }
   setResult('部署中...');
   hideResultActions();
   setBusy(true);
   try {
-    const payload = collector();
+    const payload = collectPayload();
     const result = await post('/api/deploy', payload);
     (result.logs || []).forEach(log);
-    const info = buildDeployInfo(payload, result);
-    setResult(info.text, 'success');
-    if (payload.deployMode !== 'update') {
-      recordHistory(info);
-      renderResultActions(info);
-    }
+    const url = result.domain?.hostname
+      ? `https://${result.domain.hostname}`
+      : (result.deployType === 'worker' ? `https://${result.projectName}.workers.dev` : `https://${result.projectName}.pages.dev`);
+    setResult(`${result.projectName} 部署完成`, 'success');
+    renderResultActions({ url, uuid: result.uuid, projectName: result.projectName });
   } catch (error) {
     setResult(error.message, 'error');
     log(`错误: ${error.message}`);
@@ -170,32 +317,10 @@ async function runDeploy(collector) {
   }
 }
 
-function buildDeployInfo(payload, result) {
-  if (payload.deployMode === 'update') {
-    return { text: `${result.projectName} 代码同步完成`, projectName: result.projectName, uuid: null, url: null, mode: 'update' };
-  }
-  const subdomain = `${result.projectName}.pages.dev`;
-  const url = result.domain?.hostname
-    ? `https://${result.domain.hostname}/${result.uuid}`
-    : `https://${subdomain}/${result.uuid}`;
-  return {
-    text: `${result.projectName} 部署完成`,
-    projectName: result.projectName,
-    uuid: result.uuid,
-    url,
-    rootUrl: `https://${subdomain}`,
-    domain: result.domain?.hostname || '',
-    mode: 'create'
-  };
-}
-
-function formatDeployResult(payload, result) {
-  return buildDeployInfo(payload, result).text;
-}
-
 function renderResultActions(info) {
   const box = $('resultActions');
   box.innerHTML = '';
+  box.classList.remove('page-hidden');
   const link = document.createElement('a');
   link.href = info.url;
   link.target = '_blank';
@@ -208,8 +333,7 @@ function renderResultActions(info) {
   box.append(wrap);
   box.append(actionButton('复制链接', () => copyText(info.url)));
   box.append(actionButton('复制 UUID', () => copyText(info.uuid)));
-  box.append(actionButton('打开面板', () => window.open(info.url, '_blank', 'noopener')));
-  box.classList.remove('page-hidden');
+  box.append(actionButton('打开', () => window.open(info.url, '_blank', 'noopener')));
 }
 
 function actionButton(label, onClick) {
@@ -243,340 +367,33 @@ async function copyText(text) {
   }
 }
 
-async function loadResources() {
-  const credentials = getCredentials();
-  const accountId = $('accountId').value;
-  if (!accountId) throw new Error('请先读取并选择 Account');
-  setResult('读取现有项目和 KV 中...');
-  const resources = await post('/api/resources', { credentials, accountId });
-  state.workers = resources.workers || [];
-  state.pages = resources.pages || [];
-  state.kvs = resources.kvs || [];
-  fillProjectSelect();
-  fillKvSelect();
-  log(`现有 Worker: ${state.workers.length}`);
-  log(`现有 Pages: ${state.pages.length}`);
-  log(`现有 KV: ${state.kvs.length}`);
-  (resources.warnings || []).forEach(warning => log(`提示: ${warning}`));
-  setResult('现有项目读取完成', 'success');
+// ============ 7. 日志 & 界面控制 ============
+function log(text) {
+  const target = $('logs');
+  target.textContent += `${text}\n`;
+  target.scrollTop = target.scrollHeight;
 }
 
-function getCredentials() {
-  const email = $('email').value.trim();
-  const key = $('key').value.trim();
-  if (!email || !key) throw new Error('请填写 Cloudflare 邮箱和 Global API Key');
-  return { email, key };
+function setBusy(busy) {
+  for (const button of document.querySelectorAll('button')) button.disabled = busy;
 }
 
-function collectQuickPayload() {
-  const selectedZone = state.zones.find(item => item.id === $('quickZone').value) || state.zones[0];
-  const shouldBindDomain = $('bindDomain').checked && !!selectedZone;
-  const hostname = shouldBindDomain ? randomSubdomain(selectedZone.name) : '';
-  const payload = {
-    credentials: getCredentials(),
-    accountId: $('accountId').value,
-    deployMode: 'create',
-    deployType: 'pages',
-    sourceMode: 'encoded',
-    projectName: resolveProjectName(),
-    uuid: crypto.randomUUID(),
-    kvTitle: randomName('store'),
-    hostname,
-    zoneId: shouldBindDomain ? selectedZone.id : '',
-    autoDomain: false
-  };
-  if (state.packageFiles && state.packageFiles.length) {
-    payload.files = state.packageFiles;
-  }
-  return payload;
+function setLoginStatus(text, type = '') {
+  $('loginStatus').textContent = text;
+  $('loginStatus').className = `result ${type}`.trim();
 }
 
-function resolveProjectName() {
-  const custom = sanitizeProjectName($('quickProjectName').value);
-  if (custom) return custom;
-  const file = $('packageFile').files && $('packageFile').files[0];
-  if (file) {
-    const base = sanitizeProjectName(file.name.replace(/\.zip$/i, ''));
-    if (base) return `${base.slice(0, 44)}-${randomName('edge').split('-')[1]}`;
-  }
-  return randomName('edge');
+function setResult(text, type = '') {
+  $('result').textContent = text;
+  $('result').className = `result ${type}`.trim();
 }
 
-function sanitizeProjectName(name) {
-  return String(name || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 52);
+function showPage(page) {
+  $('loginPage').classList.toggle('page-hidden', page !== 'login');
+  $('deployPage').classList.toggle('page-hidden', page !== 'deploy');
 }
 
-function collectAdvancedPayload() {
-  const credentials = getCredentials();
-  const deployMode = $('deployMode').value;
-  const selectedProject = parseProjectValue($('existingProject').value);
-  if (deployMode === 'update') {
-    const projectName = $('projectName').value.trim() || selectedProject?.name || '';
-    if (!projectName) throw new Error('更新现有项目时必须选择或填写项目名称');
-    return {
-      credentials,
-      accountId: $('accountId').value,
-      deployMode,
-      deployType: $('deployType').value,
-      sourceMode: $('sourceMode').value,
-      projectName
-    };
-  }
-  const hostname = $('advancedHostname').value.trim();
-  const zoneId = $('zoneId').value;
-  if (hostname && !zoneId && state.zones.length) {
-    const matched = matchZone(hostname);
-    if (matched) $('zoneId').value = matched.id;
-  }
-  if (hostname && !$('zoneId').value && !hostname.includes('.')) throw new Error('自定义域名需要完整域名或先选择 Zone');
-  return {
-    credentials,
-    accountId: $('accountId').value,
-    deployMode,
-    deployType: $('deployType').value,
-    sourceMode: $('sourceMode').value,
-    projectName: $('projectName').value.trim() || randomName('edge'),
-    uuid: $('uuid').value.trim() || crypto.randomUUID(),
-    kvTitle: $('kvTitle').value.trim() || randomName('store'),
-    kvId: $('kvId').value,
-    hostname,
-    zoneId: $('zoneId').value,
-    autoDomain: false,
-    enableWorkersDev: $('enableWorkersDev').checked
-  };
-}
-
-function fillSelect(select, items, emptyLabel) {
-  select.innerHTML = '';
-  const empty = document.createElement('option');
-  empty.value = '';
-  empty.textContent = emptyLabel;
-  select.append(empty);
-  for (const item of items) {
-    const option = document.createElement('option');
-    option.value = item.id;
-    option.textContent = `${item.name} (${item.id})`;
-    select.append(option);
-  }
-  if (items.length === 1) select.value = items[0].id;
-}
-
-function fillProjectSelect() {
-  const select = $('existingProject');
-  select.innerHTML = '';
-  const empty = document.createElement('option');
-  empty.value = '';
-  empty.textContent = state.workers.length || state.pages.length ? '请选择要更新的项目' : '暂无项目，先读取';
-  select.append(empty);
-  for (const worker of state.workers) appendOption(select, `worker:${worker.name}`, `Worker: ${worker.title || worker.name}`);
-  for (const page of state.pages) {
-    const kvText = page.kvId ? ` / 已有 KV: ${shortId(page.kvId)}` : '';
-    appendOption(select, `pages:${page.name}`, `Pages: ${page.title || page.name}${kvText}`);
-  }
-}
-
-function fillKvSelect() {
-  const select = $('kvId');
-  select.innerHTML = '';
-  appendOption(select, '', $('deployMode').value === 'update' ? '更新模式不修改 KV' : '新建随机 KV');
-  for (const kv of state.kvs) appendOption(select, kv.id, `${kv.title || kv.id} (${kv.id})`);
-}
-
-function appendOption(select, value, text) {
-  const option = document.createElement('option');
-  option.value = value;
-  option.textContent = text;
-  select.append(option);
-}
-
-function parseProjectValue(value) {
-  if (!value || !value.includes(':')) return null;
-  const index = value.indexOf(':');
-  return {
-    type: value.slice(0, index),
-    name: value.slice(index + 1)
-  };
-}
-
-async function post(url, body) {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  const data = await response.json();
-  if (!response.ok || !data.ok) throw new Error(data.error || `请求失败: ${response.status}`);
-  return data;
-}
-
-function setRandomNames() {
-  $('projectName').value = randomName('edge');
-  $('kvTitle').value = randomName('store');
-  $('kvId').value = '';
-  $('existingProject').value = '';
-  $('deployMode').value = 'create';
-  updateQuickDomainPreview();
-  syncModeState();
-}
-
-function updateQuickDomainPreview() {
-  const selectedZone = state.zones.find(item => item.id === $('quickZone').value) || state.zones[0];
-  if (!$('bindDomain').checked) {
-    $('quickHostnamePreview').value = '不绑定域名';
-    return;
-  }
-  if (!selectedZone) {
-    $('quickHostnamePreview').value = '账号内没有可用域名';
-    return;
-  }
-  $('quickHostnamePreview').value = randomSubdomain(selectedZone.name);
-}
-
-function randomSubdomain(zoneName) {
-  return `${randomName('edge')}.${zoneName}`;
-}
-
-function randomName(prefix) {
-  const bytes = new Uint8Array(4);
-  crypto.getRandomValues(bytes);
-  const suffix = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
-  return `${prefix}-${suffix}`;
-}
-
-function shortId(id) {
-  return id && id.length > 12 ? `${id.slice(0, 6)}...${id.slice(-6)}` : id;
-}
-
-function matchZone(hostname) {
-  return state.zones
-    .filter(zone => hostname === zone.name || hostname.endsWith(`.${zone.name}`))
-    .sort((a, b) => b.name.length - a.name.length)[0];
-}
-
-async function onPackageChange(event) {
-  const file = event.target.files && event.target.files[0];
-  if (!file) {
-    state.packageFiles = null;
-    $('packageHint').textContent = '选择一个 .zip 压缩包即可一键部署它；不选则部署远程默认源。压缩包内含 _worker.js 时会作为 Pages 高级模式脚本一起提交。';
-    $('packageHint').className = 'form-note span-two';
-    return;
-  }
-  if (!/\.zip$/i.test(file.name)) {
-    state.packageFiles = null;
-    event.target.value = '';
-    $('packageHint').textContent = '只支持 .zip 压缩包，请重新选择。';
-    $('packageHint').className = 'form-note span-two error-note';
-    return;
-  }
-  try {
-    $('packageHint').textContent = `正在解析 ${file.name} ...`;
-    $('packageHint').className = 'form-note span-two';
-    const files = await unzipToFiles(file);
-    if (!files.length) throw new Error('压缩包内没有可部署的文件');
-    state.packageFiles = files;
-    const 有Worker = files.some(item => item.path.endsWith('_worker.js'));
-    $('packageHint').textContent = `已读取 ${file.name}：共 ${files.length} 个文件${有Worker ? '（含 _worker.js，将作为 Pages 高级模式脚本提交）' : ''}`;
-    $('packageHint').className = 'form-note span-two';
-    log(`已解析压缩包: ${file.name}，文件数 ${files.length}`);
-    for (const item of files.slice(0, 20)) log(`  · ${item.path} (${item.size} 字节)`);
-    if (files.length > 20) log(`  · ... 其余 ${files.length - 20} 个文件省略`);
-  } catch (error) {
-    state.packageFiles = null;
-    event.target.value = '';
-    $('packageHint').textContent = `解析失败: ${error.message}`;
-    $('packageHint').className = 'form-note span-two error-note';
-    log(`压缩包解析失败: ${error.message}`);
-  }
-}
-
-function loadHistory() {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    state.history = Array.isArray(parsed) ? parsed.filter(item => item && item.projectName) : [];
-  } catch {
-    state.history = [];
-  }
-}
-
-function saveHistory() {
-  try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history.slice(0, 50)));
-  } catch {
-    // 本地存储不可用时静默降级，不影响部署
-  }
-}
-
-function recordHistory(info) {
-  if (!info || info.mode === 'update' || !info.projectName) return;
-  state.history.unshift({
-    projectName: info.projectName,
-    uuid: info.uuid || '',
-    url: info.url || '',
-    domain: info.domain || '',
-    account: $('accountId').selectedOptions?.[0]?.textContent || '',
-    time: new Date().toISOString()
-  });
-  state.history = state.history.slice(0, 50);
-  saveHistory();
-  renderHistory();
-}
-
-function renderHistory() {
-  const panel = $('historyPanel');
-  const list = $('historyList');
-  if (!state.history.length) {
-    panel.classList.add('page-hidden');
-    list.innerHTML = '';
-    return;
-  }
-  panel.classList.remove('page-hidden');
-  list.innerHTML = '';
-  for (const item of state.history) {
-    const row = document.createElement('div');
-    row.className = 'history-row';
-
-    const info = document.createElement('div');
-    info.className = 'history-info';
-    const title = document.createElement('strong');
-    title.textContent = item.projectName;
-    const meta = document.createElement('span');
-    meta.className = 'history-meta';
-    meta.textContent = `${formatTime(item.time)}${item.domain ? ` · 域名 ${item.domain}` : ''}`;
-    info.append(title, meta);
-
-    const actions = document.createElement('div');
-    actions.className = 'history-actions';
-    if (item.url) {
-      const open = document.createElement('a');
-      open.href = item.url;
-      open.target = '_blank';
-      open.rel = 'noopener';
-      open.className = 'secondary small history-open';
-      open.textContent = '打开';
-      actions.append(open);
-      actions.append(actionButton('复制', () => copyText(item.url)));
-    }
-    actions.append(actionButton('删除', () => removeHistory(item)));
-
-    row.append(info, actions);
-    list.append(row);
-  }
-}
-
-function removeHistory(item) {
-  state.history = state.history.filter(entry => !(entry.projectName === item.projectName && entry.time === item.time));
-  saveHistory();
-  renderHistory();
-}
-
-function formatTime(iso) {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  const pad = value => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
+// ============ 8. 压缩包解压（zip） ============
 async function unzipToFiles(file) {
   const buffer = new Uint8Array(await file.arrayBuffer());
   const view = new DataView(buffer.buffer);
@@ -606,11 +423,7 @@ async function unzipToFiles(file) {
     const path = normalizeZipPath(rawName);
     if (path && !path.endsWith('/')) {
       const content = await decompressEntry(compressed, method);
-      files.push({
-        path,
-        base64: bytesToBase64(content),
-        size: content.length
-      });
+      files.push({ path, base64: bytesToBase64(content), size: content.length });
     }
     if (hasDataDescriptor) {
       const nextOffset = findNextLocalHeader(buffer, view, dataStart);
@@ -652,39 +465,56 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
-function syncModeState() {
-  const updating = $('deployMode').value === 'update';
-  $('deploy').textContent = updating ? '更新部署' : '高级部署';
-  $('modeHint').textContent = updating
-    ? '更新模式只同步代码，不创建 KV，不修改 UUID、KV 绑定、域名或 Pages 项目配置。'
-    : '新建模式会按表单配置随机 UUID、KV 和可选域名。';
-  for (const id of ['uuid', 'kvTitle', 'kvId', 'advancedHostname', 'zoneId', 'enableWorkersDev']) {
-    $(id).disabled = updating;
+async function onPackageChange(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) { state.packageFiles = null; $('packageHint').textContent = '选择 .zip 压缩包即可一键部署；不选则拉取远程默认源。'; return; }
+  if (!/\.zip$/i.test(file.name)) {
+    state.packageFiles = null;
+    event.target.value = '';
+    $('packageHint').textContent = '只支持 .zip 压缩包，请重新选择。';
+    return;
   }
-  if ($('kvId').options[0]) $('kvId').options[0].textContent = updating ? '更新模式不修改 KV' : '新建随机 KV';
+  try {
+    $('packageHint').textContent = `正在解析 ${file.name} ...`;
+    const files = await unzipToFiles(file);
+    if (!files.length) throw new Error('压缩包内没有可部署的文件');
+    state.packageFiles = files;
+    const 有Worker = files.some(item => item.path.endsWith('_worker.js'));
+    $('packageHint').textContent = `已读取 ${file.name}：共 ${files.length} 个文件${有Worker ? '（含 _worker.js，将作为高级模式脚本提交）' : ''}`;
+    log(`已解析压缩包: ${file.name}，文件数 ${files.length}`);
+  } catch (error) {
+    state.packageFiles = null;
+    event.target.value = '';
+    $('packageHint').textContent = `解析失败: ${error.message}`;
+    log(`压缩包解析失败: ${error.message}`);
+  }
 }
 
-function showPage(page) {
-  $('loginPage').classList.toggle('page-hidden', page !== 'login');
-  $('deployPage').classList.toggle('page-hidden', page !== 'deploy');
+// ============ 初始化 ============
+function init() {
+  $('uuid').value = crypto.randomUUID();
+  renderServiceCards();
+  showPage('login');
+
+  $('loginButton').addEventListener('click', login);
+  $('backToLogin').addEventListener('click', () => {
+    state.loggedIn = false;
+    showPage('login');
+    setLoginStatus('已返回登录页');
+  });
+  $('deploy').addEventListener('click', runDeploy);
+  $('newNames').addEventListener('click', () => {
+    $('uuid').value = crypto.randomUUID();
+    $('projectName').value = randomName('edge');
+    setResult('已重新随机', 'success');
+  });
+  $('loadResources').addEventListener('click', async () => {
+    setBusy(true);
+    try { await loadResources(); } catch (error) { setResult(error.message, 'error'); log(`错误: ${error.message}`); }
+    finally { setBusy(false); }
+  });
+  $('clearLogs').addEventListener('click', () => { $('logs').textContent = ''; });
+  $('packageFile').addEventListener('change', onPackageChange);
 }
 
-function setBusy(busy) {
-  for (const button of document.querySelectorAll('button')) button.disabled = busy;
-}
-
-function setLoginStatus(text, type = '') {
-  $('loginStatus').textContent = text;
-  $('loginStatus').className = `result ${type}`.trim();
-}
-
-function setResult(text, type = '') {
-  $('result').textContent = text;
-  $('result').className = `result ${type}`.trim();
-}
-
-function log(text) {
-  const target = $('logs');
-  target.textContent += `${text}\n`;
-  target.scrollTop = target.scrollHeight;
-}
+init();
