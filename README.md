@@ -1,127 +1,161 @@
-# 云端部署器（CF 部署项目）
+# 云端部署器（Cloudflare 通用部署面板）
 
-> 本面板由 **数码解码** 独立开发，用于一键部署旗下星云解码（Nebula-Decode）系列项目到 Cloudflare。
+一个部署在 Cloudflare Pages 上的**通用一键部署面板**。填入 Cloudflare 邮箱 + Global API Key，即可在浏览器里一键把任意项目部署到 **Workers / Pages**，并按需绑定 Cloudflare 免费服务：
 
-一个部署在 Cloudflare Pages 上的**一键部署面板**。填入 Cloudflare 邮箱 + Global API Key，即可在浏览器里一键完成：Pages/Worker 项目创建、随机 UUID、随机 KV、随机项目名，以及可选的随机子域名绑定。
+| 服务 | 免费额度 | 说明 |
+|------|---------|------|
+| **Workers** | 10万请求/天 | 纯脚本部署 |
+| **Pages** | 500 构建/月 | 静态站点 + 高级模式 |
+| **KV** | 1GB / 10万读每天 | 键值存储 |
+| **D1** | 5GB / 500万行读每月 | SQLite 数据库 |
+| **R2** | 10GB / 100万操作每月 | 对象存储 |
+| **Queues** | 1万条/天 | 消息队列 |
+| **Durable Objects** | 40万GB-s/月 | 有状态对象 |
+| **Vectorize** | 免费档有额度 | 向量数据库 |
+| **Workflows** | 免费档有额度 | 工作流 |
+| **Hyperdrive** | 10万查询/天 | 数据库连接池 |
 
 面板本身也是一套 Pages 项目（静态前端 + Pages 高级模式 Worker），部署一次后长期使用。
 
----
+## 一、功能
 
-## 一、这个面板能做什么
+- **登录**：邮箱 + Global API Key，前端不写 localStorage。
+- **一键部署**：随机项目名 + 随机 UUID + 可选绑定多个免费服务（勾选服务卡片即可）。
+- **服务卡片**：每个服务一张卡片（勾选开关 + 展开表单），支持新建随机 / 复用现有。
+- **部署方式**：Pages / Worker 可选；源码模式（加密混淆 / 明文）可选；新建 / 更新现有可选。
+- **域名绑定**：Pages 自动创建 CNAME；Worker 优先 workers/domains，失败回落 Route。
+- **实时日志**：每一步实时输出到日志面板。
 
-| 能力 | 说明 |
-| --- | --- |
-| **登录** | 只填邮箱 + Global API Key，前端不写 localStorage，Key 不持久化。 |
-| **一键部署** | 随机项目名 + 随机 UUID + 随机 KV + Pages 部署，默认使用加密/混淆源。 |
-| **上传压缩包部署** | 选择 `.zip` 压缩包，浏览器本地解压后把**全部文件**上传到新建的 Pages 项目；包内含 `_worker.js` 时自动作为 Pages 高级模式脚本提交（适合星云解码这类单文件终端项目）。 |
-| **高级部署** | 可选 Pages / Worker；可选加密混淆 / 明文源；可选「随机新建 / 更新现有」；可指定 Account、Zone、自定义域名、复用现有 KV。 |
-| **域名绑定** | Pages 自动创建 CNAME 指向 `*.pages.dev`；Worker 优先走 workers/domains，失败自动回落 Route。 |
-| **实时日志** | 每一步操作实时输出到页面日志面板。 |
+## 二、项目结构（重构后）
 
----
+cf-deploy-panel/
+├── _worker.js            # Pages 高级模式入口（转发到 worker/index.js）
+├── index.html            # 界面：登录页 + 服务配置中心
+├── styles.css            # 玻璃拟态样式
+├── app.js                # 前端逻辑（服务卡片动态渲染、表单收集、部署）
+├── worker/               # 后端模块化
+│   ├── config.js         # 全局常量
+│   ├── index.js          # 路由 + 静态回退
+│   ├── api/
+│   │   ├── router.js     # /api/* 路由分发
+│   │   ├── auth.js       # 账户/Zone 读取
+│   │   ├── resources.js  # 现有资源读取
+│   │   ├── deploy.js     # 部署编排
+│   │   └── util.js       # 基础工具（接口调用、编码、hash）
+│   └── services/         # 每个 Cloudflare 服务一个模块
+│       ├── index.js      # 服务注册表（契约）
+│       ├── kv.js  d1.js  r2.js  queues.js
+│       ├── durable.js  vectorize.js  workflows.js  hyperdrive.js
+│       └── domains.js    # 域名绑定
+└── tests/validate.mjs    # 自动化校验
 
-## 二、项目结构
 
-| 文件 / 目录 | 说明 |
-| --- | --- |
-| `index.html` | 面板页面：登录页 → 一键部署 → 高级设置 → 日志。 |
-| `styles.css` | 浅色玻璃拟态样式，含移动端响应式。 |
-| `app.js` | 前端逻辑：登录校验、账户/Zone 读取、**zip 解压**、部署参数收集、日志展示。 |
-| `_worker.js` | Pages 高级模式 Worker：提供 `/api/*` 接口，转发 Cloudflare API 完成部署。 |
-| `tests/validate.mjs` | 自动化校验脚本（元素 ID 交叉校验 + Worker API 冒烟测试）。 |
+## 三、部署到 Cloudflare
 
----
+### 方式一：Git 集成（推荐）
+1. 在 Cloudflare 控制台 → Workers 和 Pages → 创建 → Pages → **连接到 Git**。
+2. 选择本仓库（`runv123/cf-deploy-panel`），生产分支 `main`。
+3. 构建设置：**构建命令留空**（Pages 高级模式会直接识别 `_worker.js`），输出目录 `/`。
+4. 部署后，进入项目 → **设置 → 运行时**，把兼容性日期设为 `2026-01-20`，保存。
 
-## 三、把面板部署到 Cloudflare（操作步骤）
+### 方式二：控制台上传
+1. Workers 和 Pages → 创建 → Pages → **上传资产**。
+2. 上传 `index.html`、`styles.css`、`app.js`、`_worker.js` 和整个 `worker/` 目录。
+3. 设置兼容性日期 `2026-01-20`。
 
-### 方式一：控制台上传（推荐新手）
-
-1. 打开 <https://dash.cloudflare.com>，登录你的 Cloudflare 账号。
-2. 左侧进入 **Workers 和 Pages** → 点击 **创建** → 选择 **Pages** → **上传资产**。
-3. 项目名称填 `deploy-panel`（或任意名字）。
-4. 把本目录的 **5 个文件**（`index.html`、`styles.css`、`app.js`、`_worker.js`、`README.md`）**一起拖拽**到上传区；不要上传 `tests/` 目录。
-5. 点击 **部署**，等待完成，会得到一个 `xxx.pages.dev` 地址。
-6. **重要**：进入该项目的 **设置 → 运行时（Runtime）**，把 **兼容性日期（Compatibility date）** 设为 `2026-01-20`，保存。
-
-> 说明：`_worker.js` 是 Pages 高级模式入口。只要它和静态文件在同一目录一起上传，Pages 会自动把它当 Worker 运行，`/api/*` 接口由此提供。
-
-### 方式二：wrangler 命令行
-
-```bash
-# 首次使用需登录
-npx wrangler login
-
-# 在项目目录下执行（把 . 换成你的目录）
-npx wrangler pages deploy . --project-name deploy-panel
-```
-
-部署后同样建议到控制台把兼容性日期设为 `2026-01-20`。
-
----
-
-## 四、使用面板（操作步骤）
-
-1. 打开你部署好的面板地址（`https://deploy-panel.xxx.pages.dev`）。
-2. **登录页**：填入 Cloudflare 邮箱 + **Global API Key**，点「登录并继续」。
-   - Global API Key 在 Cloudflare 控制台 **我的个人资料 → API 令牌 → Global API Key → 查看** 处获取。
-3. 进入 **一键部署** 页：
-   - **可选域名**：选择要绑定的 Zone（不选则不绑定）。
-   - **随机子域名预览**：勾选「绑定随机子域名」后这里会显示将生成的随机子域名。
-   - **部署包（可选）**：点击选择你的 `.zip` 压缩包。
-     - 选中后会提示解析出的文件数量；含 `_worker.js` 时会提示将作为 Pages 高级模式脚本提交。
-     - **不选**压缩包时，则部署远程默认源。
-   - 点「**一键部署**」，观察下方日志，成功后结果行会显示访问地址 / UUID。
-4. 需要更细的控制时，展开 **高级设置**：
-   - 「刷新账户/域名」读取你的 Account 与 Zone 列表；
-   - 「读取现有项目」列出已有的 Worker / Pages / KV，供「更新现有」模式选择；
-   - 可切换部署方式（Pages / Worker）、部署源（加密混淆 / 明文）、操作模式（随机新建 / 更新现有）；
-   - 更新模式只同步代码，**不会**修改 UUID、KV 绑定、域名或项目配置。
-
----
-
-## 五、配置说明（`_worker.js` 顶部常量）
-
-```js
-const 接口地址 = 'https://api.cloudflare.com/client/v4';                          // Cloudflare API
-const 兼容日期 = '2026-01-20';                                                    // 部署产物的 compatibility_date
-const 绑定名 = 'KV';                                                              // KV 绑定名（与目标源码一致）
-const 源码远程基础 = 'https://raw.githubusercontent.com/shuma12303/nebula-decode/main/public'; // 数码解码官方源码仓库
-```
-
-- `源码远程基础`：**不选压缩包**时，面板会从这里（数码解码官方仓库）实时拉取 `_worker.js` 作为部署源码。要部署自己的项目时改成你的仓库地址。
-- `绑定名`：目标源码约定通过名为 `KV` 的 KV 绑定读取配置；源码头部的 `cf_terminal_cfg`、`cf_terminal_ips` 键会在初始化时写入。
-- `兼容日期`：会写进部署产物的运行时配置。
-
----
-
-## 六、版权与作者
-
-- 本部署面板（`index.html` / `app.js` / `styles.css` / `_worker.js`）由 **数码解码** 独立开发并维护。
-- 面板默认部署的目标项目 **星云解码（Nebula-Decode）** 同为 **数码解码** 自主开发，作者主页：<https://github.com/shuma12303/nebula-decode>。
-- 请勿移除本源文件中的作者与版权声明。
-
----
-
-## 七、本地开发
+## 四、本地开发
 
 ```bash
-# 语法检查
 node --check app.js
 node --check _worker.js
-
-# 自动化校验：HTML/JS 元素 ID 交叉校验 + Worker API 冒烟测试（不访问真实网络）
 node tests/validate.mjs
-
-# 本地起静态服务预览前端（/api 会 404，需部署到 Pages 才有后端）
 npx serve .
-```
+
+五、扩展服务（新增一个免费服务）
+
+1. 新建 worker/services/<id>.js，实现契约（id/label/freeTier/available/supportsUpdate/collectPayload/ensure/buildBinding/rollback）。
+2. 在 worker/services/index.js 的 SERVICES 数组注册一行。
+3. 在 app.js 的 SERVICES 数组加一条前端卡片配置。
+4. 在 worker/api/resources.js 的 读取服务列表 加一个 case。
+
+完成，前端自动出现新卡片。
+
+六、安全提示
+
+- Global API Key 权限很大，仅在自己信任的部署面板上使用。
+- 面板 /api 只做转发，不落库、不写本地存储。
+- 子请求限制：免费版 Worker 单次请求子请求上限约 50，上传压缩包按每批 50 个资源处理。
 
 ---
 
-## 八、注意事项与安全提示
+## 📄 文件 23：`tests/validate.mjs`（更新）
 
-- **兼容性日期**：部署面板和部署产物都依赖 `2026-01-20`，部署后请务必在控制台确认。
-- **子请求限制**：Cloudflare 免费版 Worker 单次请求的子请求数上限约 **50**。上传压缩包时，面板按每批 50 个资源上传；文件数非常多的包可能受此限制。
-- **Global API Key 权限很大**，仅在自己信任的部署面板上使用；面板的 `/api` 只做转发，不落库、不写本地存储。
-- 部署完成后，建议到 Cloudflare 后台确认生成的项目、KV 和域名记录符合预期。
+```js
+// ============================================================
+// 云端部署器 · 自动化校验
+// 由 数码解码 独立开发并维护 · 请勿移除作者与版权声明
+// ------------------------------------------------------------
+// 校验：
+//  1. 后端服务模块契约完整性（services 注册表）
+//  2. HTML 元素 ID 与 app.js 引用交叉校验
+//  3. 语法冒烟（无网络）
+// ============================================================
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const 根 = join(dirname(fileURLToPath(import.meta.url)), '..');
+const 错误 = [];
+const 警告 = [];
+
+// 1. 检查后端服务模块文件存在
+const 服务目录 = join(根, 'worker', 'services');
+const 服务文件 = ['index.js', 'kv.js', 'd1.js', 'r2.js', 'queues.js', 'durable.js', 'vectorize.js', 'workflows.js', 'hyperdrive.js', 'domains.js'];
+for (const 文件 of 服务文件) {
+  if (!existsSync(join(服务目录, 文件))) 错误.push(`缺少服务模块: worker/services/${文件}`);
+}
+
+// 2. 检查 API 模块
+const api目录 = join(根, 'worker', 'api');
+const api文件 = ['router.js', 'auth.js', 'resources.js', 'deploy.js', 'util.js'];
+for (const 文件 of api文件) {
+  if (!existsSync(join(api目录, 文件))) 错误.push(`缺少 API 模块: worker/api/${文件}`);
+}
+
+// 3. 检查根入口
+for (const 文件 of ['_worker.js', 'index.html', 'app.js', 'styles.css']) {
+  if (!existsSync(join(根, 文件))) 错误.push(`缺少根文件: ${文件}`);
+}
+
+// 4. HTML 元素 ID 与 app.js 引用交叉校验
+try {
+  const html = readFileSync(join(根, 'index.html'), 'utf-8');
+  const js = readFileSync(join(根, 'app.js'), 'utf-8');
+  const 所需ID = [...js.matchAll(/\$\('([^']+)'\)/g)].map(m => m[1]);
+  for (const id of new Set(所需ID)) {
+    if (!html.includes(`id="${id}"`)) 错误.push(`app.js 引用但 HTML 缺失元素: #${id}`);
+  }
+} catch (e) {
+  错误.push(`交叉校验失败: ${e.message}`);
+}
+
+// 5. 检查 index.html 引用了 app.js 和 styles.css
+try {
+  const html = readFileSync(join(根, 'index.html'), 'utf-8');
+  if (!html.includes('/app.js')) 错误.push('index.html 未引用 /app.js');
+  if (!html.includes('/styles.css')) 错误.push('index.html 未引用 /styles.css');
+} catch (e) {
+  错误.push(`HTML 检查失败: ${e.message}`);
+}
+
+// 输出
+if (错误.length) {
+  console.error('❌ 校验失败:');
+  错误.forEach(e => console.error('  - ' + e));
+  警告.forEach(w => console.warn('  ⚠ ' + w));
+  process.exit(1);
+} else {
+  console.log('✅ 校验通过');
+  警告.forEach(w => console.warn('  ⚠ ' + w));
+}
+
