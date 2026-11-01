@@ -1,18 +1,16 @@
 // ============================================================
-// 云端部署器 · 部署编排
+// 云端部署器 v2 · 部署编排
 // 由 数码解码 独立开发并维护 · 请勿移除作者与版权声明
 // ------------------------------------------------------------
-// 职责：
-//  1. 补全部署参数（默认值、Account 自动选择、域名匹配）
-//  2. 校验参数
-//  3. 创建/复用各服务资源（按注册表逐个 ensure）
-//  4. 组装 Worker/Pages 绑定（buildBinding）
-//  5. 上传 Worker 或 Pages
-//  6. 绑定域名
+// v2 变更：
+//  - 去掉 encoded/plain 源码模式
+//  - 远程源可配置（sourceUrl 用户填自己的源地址，默认空不拉节点源）
+//  - 源版本选择（sourceRef = 分支/tag/commit）
+//  - 源码来源：zip / 粘贴代码 / 填自己的源地址
 // ============================================================
 
 import { 调用接口, 返回JSON, 生成随机名称, 清理项目名, 调用JWT接口, 提取扩展名, 内容类型, 字节转Base64, 计算资源Hash } from './util.js';
-import { 兼容日期, 源码远程基础 } from '../config.js';
+import { 兼容日期 } from '../config.js';
 import { SERVICES, getService } from '../services/index.js';
 import { 绑定域名, 列出绑定域名 } from '../services/domains.js';
 
@@ -28,7 +26,6 @@ export async function deploy(数据, context) {
   const 项目名 = 操作模式 === 'update'
     ? String(数据.projectName || '').trim()
     : 清理项目名(数据.projectName || 生成随机名称('edge'));
-  const 模式 = 数据.sourceMode === 'plain' ? 'plain' : 'encoded';
   const 部署方式 = 数据.deployType === 'worker' ? 'worker' : 'pages';
 
   记录(`准备${操作模式 === 'update' ? '更新' : '部署'} ${部署方式 === 'pages' ? 'Pages' : 'Worker'}: ${项目名}`);
@@ -36,19 +33,18 @@ export async function deploy(数据, context) {
   // 更新模式：只同步代码，不动绑定
   if (操作模式 === 'update') {
     if (部署方式 === 'worker') {
-      await 同步Worker代码(数据.credentials, { accountId: 数据.accountId, scriptName: 项目名, sourceMode: 模式, files: 数据.files }, context, 记录);
+      await 同步Worker代码(数据.credentials, { accountId: 数据.accountId, scriptName: 项目名, files: 数据.files, code: 数据.code }, context, 记录);
     } else {
-      await 同步Pages代码(数据.credentials, { accountId: 数据.accountId, projectName: 项目名, sourceMode: 模式, files: 数据.files }, context, 记录);
+      await 同步Pages代码(数据.credentials, { accountId: 数据.accountId, projectName: 项目名, files: 数据.files, code: 数据.code }, context, 记录);
     }
     记录('更新模式只同步代码，未修改绑定/配置');
-    return 返回JSON(200, { ok: true, deployType: 部署方式, projectName: 项目名, sourceMode: 模式, logs: 日志 });
+    return 返回JSON(200, { ok: true, deployType: 部署方式, projectName: 项目名, logs: 日志 });
   }
 
   // ============ 创建模式 ============
-  // 1. 逐个创建/复用服务资源（注册表遍历）
-  const 资源映射 = {};       // serviceId -> resource
-  const 创建的资源列表 = [];   // 用于回滚
-  const 绑定片段 = {};        // 组装各服务的绑定
+  const 资源映射 = {};
+  const 创建的资源列表 = [];
+  const 绑定片段 = {};
 
   try {
     for (const service of SERVICES) {
@@ -62,7 +58,6 @@ export async function deploy(数据, context) {
       if (resource.created) 创建的资源列表.push({ service, resource });
     }
   } catch (错误) {
-    // 回滚已创建的资源
     记录(`资源创建失败，回滚中: ${错误.message}`);
     for (const item of 创建的资源列表.reverse()) {
       await item.service.rollback(数据.credentials, 数据.accountId, item.resource, 记录).catch(() => null);
@@ -75,20 +70,24 @@ export async function deploy(数据, context) {
     await 部署Worker(数据.credentials, {
       accountId: 数据.accountId,
       scriptName: 项目名,
-      sourceMode: 模式,
       uuid,
       bindings: 合并Worker绑定(绑定片段),
       enableWorkersDev: !!数据.enableWorkersDev,
       files: 数据.files,
+      code: 数据.code,
+      sourceUrl: 数据.sourceUrl,
+      sourceRef: 数据.sourceRef,
     }, context, 记录);
   } else {
     await 部署Pages(数据.credentials, {
       accountId: 数据.accountId,
       projectName: 项目名,
-      sourceMode: 模式,
       uuid,
       configs: 合并Pages配置(绑定片段, uuid),
       files: 数据.files,
+      code: 数据.code,
+      sourceUrl: 数据.sourceUrl,
+      sourceRef: 数据.sourceRef,
     }, context, 记录);
   }
 
@@ -114,7 +113,6 @@ export async function deploy(数据, context) {
     ok: true,
     deployType: 部署方式,
     projectName: 项目名,
-    sourceMode: 模式,
     uuid,
     resources: 资源映射,
     domain,
@@ -141,7 +139,6 @@ async function 补全部署默认值(数据) {
     输出.accountName = accounts[0].name;
   }
   if (!输出.deployType) 输出.deployType = 'pages';
-  if (!输出.sourceMode) 输出.sourceMode = 'encoded';
   if (输出.deployMode === 'update') return 输出;
 
   if (输出.autoDomain && !输出.hostname) {
@@ -182,7 +179,6 @@ function 校验部署参数(数据) {
 
 // ============ 合并绑定 ============
 function 合并Worker绑定(绑定片段) {
-  // 绑定片段：{ serviceId: { type, name, ... } } 或 { serviceId: null }
   const 结果 = [];
   for (const key of Object.keys(绑定片段)) {
     const 片段 = 绑定片段[key];
@@ -194,7 +190,6 @@ function 合并Worker绑定(绑定片段) {
 }
 
 function 合并Pages配置(绑定片段, uuid) {
-  // Pages deployment_configs 结构
   const 单项 = {
     compatibility_date: 兼容日期,
     env_vars: { UUID: { type: 'plain_text', value: uuid } },
@@ -203,7 +198,6 @@ function 合并Pages配置(绑定片段, uuid) {
     const 片段 = 绑定片段[key];
     if (!片段) continue;
     for (const 配置字段 of Object.keys(片段)) {
-      // 片段形如 { kv_namespaces: {...}, d1_databases: {...} }
       单项[配置字段] = { ...(单项[配置字段] || {}), ...片段[配置字段] };
     }
   }
@@ -212,7 +206,7 @@ function 合并Pages配置(绑定片段, uuid) {
 
 // ============ Worker 部署 ============
 async function 部署Worker(凭据, 选项, context, 记录) {
-  const 代码 = await 读取源代码(选项.sourceMode, context, 选项.files);
+  const 代码 = await 读取源代码(context, 选项);
   const 表单 = new FormData();
   const 元数据 = {
     main_module: 'worker.js',
@@ -235,7 +229,7 @@ async function 部署Worker(凭据, 选项, context, 记录) {
 }
 
 async function 同步Worker代码(凭据, 选项, context, 记录) {
-  const 代码 = await 读取源代码(选项.sourceMode, context, 选项.files);
+  const 代码 = await 读取源代码(context, 选项);
   const 设置 = await 读取Worker设置(凭据, 选项.accountId, 选项.scriptName);
   const 元数据 = 生成保留Worker元数据(设置);
   const 表单 = new FormData();
@@ -278,7 +272,7 @@ async function 启用WorkersDev(凭据, accountId, scriptName) {
 // ============ Pages 部署 ============
 async function 部署Pages(凭据, 选项, context, 记录) {
   const 项目 = await 创建或更新Pages项目(凭据, 选项, 记录);
-  const 代码 = await 读取源代码(选项.sourceMode, context, 选项.files);
+  const 代码 = await 读取源代码(context, 选项);
   await 上传Pages部署(凭据, 选项.accountId, 选项.projectName, 代码, 选项.files, 记录);
   记录(`Pages 项目已配置: ${项目.name}`);
   记录('Pages 部署上传完成');
@@ -291,7 +285,7 @@ async function 同步Pages代码(凭据, 选项, context, 记录) {
     if (String(错误.message).includes('404')) throw new Error(`找不到现有 Pages 项目: ${选项.projectName}`);
     throw 错误;
   }
-  const 代码 = await 读取源代码(选项.sourceMode, context, 选项.files);
+  const 代码 = await 读取源代码(context, 选项);
   记录('Pages 更新模式不修改绑定/变量/域名配置');
   await 上传Pages部署(凭据, 选项.accountId, 选项.projectName, 代码, 选项.files, 记录);
   记录('Pages 代码同步完成');
@@ -381,20 +375,31 @@ async function 生成WorkerBundle(workerCode) {
   return await new Response(内层).blob();
 }
 
-// ============ 源码读取 ============
-async function 读取源代码(mode, context, files) {
-  if (files) {
-    const 入口 = 查找入口文件(files);
+// ============ 源码读取（v2：支持 zip / 粘贴代码 / 源地址+版本） ============
+async function 读取源代码(context, 选项) {
+  // 1. 粘贴代码（code 字段）
+  if (选项.code && 选项.code.trim()) return 选项.code;
+
+  // 2. zip 上传
+  if (选项.files && 选项.files.length) {
+    const 入口 = 查找入口文件(选项.files);
     if (!入口) throw new Error('上传的压缩包中未找到 _worker.js，无法作为高级模式脚本部署');
     return 入口;
   }
-  const 文件名 = '_worker.js';
-  const 远程地址 = `${源码远程基础}/${encodeURIComponent(文件名)}?t=${Date.now()}`;
-  const 响应 = await fetch(远程地址, { headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' } });
-  if (!响应.ok) throw new Error(`实时拉取源文件失败: ${响应.status} ${响应.statusText}`);
-  const 内容 = await 响应.text();
-  if (!内容.trim()) throw new Error('实时拉取源文件失败: 远程源文件为空');
-  return 内容;
+
+  // 3. 远程源地址（用户填自己的 sourceUrl）
+  if (选项.sourceUrl && 选项.sourceUrl.trim()) {
+    const 版本 = 选项.sourceRef ? `@${encodeURIComponent(选项.sourceRef)}` : '';
+    const 地址 = 版本 ? `${选项.sourceUrl.replace(/\/+$/, '')}/${版本}/_worker.js` : `${选项.sourceUrl.replace(/\/+$/, '')}/_worker.js`;
+    const 响应 = await fetch(地址, { headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' } });
+    if (!响应.ok) throw new Error(`拉取源文件失败: ${响应.status} ${响应.statusText}`);
+    const 内容 = await 响应.text();
+    if (!内容.trim()) throw new Error('远程源文件为空');
+    return 内容;
+  }
+
+  // 4. 都没有 → 报错（v2 不默认拉节点源）
+  throw new Error('未提供源码：请上传 zip、粘贴代码，或填写源地址');
 }
 
 function 查找入口文件(files) {
