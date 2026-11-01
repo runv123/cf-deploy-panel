@@ -1,10 +1,6 @@
 // ============================================================
-// 云端部署器 · 服务模块：域名绑定
+// 云端部署器 v2 · 服务模块：域名绑定/解绑
 // 由 数码解码 独立开发并维护 · 请勿移除作者与版权声明
-// ------------------------------------------------------------
-// 这个不是注册表服务，而是被部署流程调用的辅助模块。
-// Pages：创建 CNAME 指向 *.pages.dev
-// Worker：优先 workers/domains，失败回落 workers/routes
 // ============================================================
 
 import { 调用接口 } from '../api/util.js';
@@ -28,7 +24,6 @@ export async function 绑定域名(凭据, 选项, 记录) {
     return { hostname: 结果.name || 选项.hostname, type: 'pages' };
   }
 
-  // Worker：优先自定义域名，失败回落 Route
   const 请求体 = {
     environment: 'production',
     hostname: 选项.hostname,
@@ -65,5 +60,32 @@ export async function 列出绑定域名(凭据, 选项, 记录) {
   } catch (错误) {
     记录(`域名列表读取失败: ${错误.message}`);
     return [];
+  }
+}
+
+// ===== v2 新增：解绑域名 =====
+export async function 解绑域名(凭据, 选项, 记录) {
+  if (选项.deployType === 'pages') {
+    // Pages 解绑：删除项目域名关联
+    const 结果 = await 调用接口(凭据,
+      `/accounts/${选项.accountId}/pages/projects/${encodeURIComponent(选项.projectName)}/domains/${encodeURIComponent(选项.hostname)}`,
+      { method: 'DELETE' }
+    );
+    记录(`Pages 域名已解绑: ${选项.hostname}`);
+    return { hostname: 选项.hostname, type: 'pages' };
+  }
+  // Worker 解绑：优先自定义域，失败回落 Route 删除
+  try {
+    const 结果 = await 调用接口(凭据, `/accounts/${选项.accountId}/workers/domains/${encodeURIComponent(选项.hostname)}`, {
+      method: 'DELETE'
+    });
+    记录(`Worker 自定义域名已解绑: ${选项.hostname}`);
+    return { hostname: 选项.hostname, type: 'worker' };
+  } catch (错误) {
+    await 调用接口(凭据, `/zones/${选项.zoneId}/workers/routes/${encodeURIComponent(选项.hostname.replace(/\./g, '-'))}`, {
+      method: 'DELETE'
+    });
+    记录(`Worker Route 已解绑: ${选项.hostname}/*`);
+    return { hostname: 选项.hostname, type: 'route' };
   }
 }
