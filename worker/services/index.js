@@ -1,10 +1,9 @@
 // ============================================================
-// 云端部署器 · 服务注册表（架构核心）
+// 云端部署器 v2 · 服务注册表（架构核心）
 // 由 数码解码 独立开发并维护 · 请勿移除作者与版权声明
 // ------------------------------------------------------------
 // 每个 Cloudflare 服务对应 services/<id>.js 一个模块。
 // 模块默认导出统一契约对象，注册到下面的 SERVICES 数组。
-// 新增服务 = 新建一个文件 + 在这里注册一行，前端自动生成卡片。
 // ============================================================
 
 import kv from './kv.js';
@@ -15,9 +14,13 @@ import durable from './durable.js';
 import vectorize from './vectorize.js';
 import workflows from './workflows.js';
 import hyperdrive from './hyperdrive.js';
+// v2 新增：项目类服务
+import pages from './pages.js';
+import worker from './worker.js';
 
 export const SERVICES = [
   kv, d1, r2, queues, durable, vectorize, workflows, hyperdrive,
+  pages, worker,   // 项目类放最后（Dashboard 主区）
 ];
 
 export function getService(id) {
